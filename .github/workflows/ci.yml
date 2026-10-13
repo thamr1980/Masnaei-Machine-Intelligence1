@@ -1,88 +1,94 @@
 
-Ci · YML
-name: CI
- 
-on:
+name: Masnaei .NET CI
+
+'on':
   push:
-    branches: [ main ]
+    branches:
+      - main
   pull_request:
   workflow_dispatch:
- 
+
 permissions:
   contents: read
- 
+
 jobs:
   build-test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+
     steps:
-      - name: Check out repository
+      - name: Checkout repository
         uses: actions/checkout@v4
- 
-      # Works both when the project files are committed normally (src/ exists in the repo root)
-      # and when the repository only contains the uploaded Masnaei*.zip archive.
+
       - name: Locate project
         shell: bash
         run: |
           if [ -d src ]; then
             echo "PROJECT_DIR=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
           else
-            zip_file=$(ls Masnaei*.zip 2>/dev/null | head -n 1 || true)
+            zip_file=$(find . -maxdepth 1 -type f -name 'Masnaei*.zip' -print -quit)
             if [ -z "$zip_file" ]; then
-              echo "::error::No src folder and no Masnaei*.zip archive found in the repository root."
+              echo "::error::Project source or Masnaei ZIP file not found."
               exit 1
             fi
-            unzip -q "$zip_file" -d "$RUNNER_TEMP/extracted"
-            src_dir=$(find "$RUNNER_TEMP/extracted" -type d -name src -print -quit)
+
+            mkdir -p "$RUNNER_TEMP/masnaei"
+            unzip -q "$zip_file" -d "$RUNNER_TEMP/masnaei"
+
+            src_dir=$(find "$RUNNER_TEMP/masnaei" -type d -name src -print -quit)
+
             if [ -z "$src_dir" ]; then
-              echo "::error::The archive does not contain a src folder."
+              echo "::error::ZIP does not contain a src directory."
               exit 1
             fi
+
             echo "PROJECT_DIR=$(dirname "$src_dir")" >> "$GITHUB_ENV"
           fi
- 
-      - name: Set up .NET 8 SDK
+
+      - name: Setup .NET 8
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 8.0.x
- 
-      - name: Show SDK and project layout
-        working-directory: ${{ env.PROJECT_DIR }}
+          dotnet-version: '8.0.x'
+
+      - name: Show project files
+        shell: bash
         run: |
           dotnet --info
-          find . -name '*.csproj' | sort
- 
-      - name: Create solution file if missing
+          find "$PROJECT_DIR" -name '*.csproj' -print
+
+      - name: Create solution if missing
+        shell: bash
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          if ! ls ./*.sln >/dev/null 2>&1; then
+          if ! find . -maxdepth 1 -name '*.sln' | grep -q .; then
             dotnet new sln -n Masnaei
-            find . -name '*.csproj' -print0 | sort -z | xargs -0 -n1 dotnet sln Masnaei.sln add
+            find . -name '*.csproj' -print0 | while IFS= read -r -d '' project; do
+              dotnet sln Masnaei.sln add "$project"
+            done
           fi
-          dotnet sln list
- 
-      - name: Restore NuGet dependencies
+
+      - name: Restore
         working-directory: ${{ env.PROJECT_DIR }}
         run: dotnet restore
- 
-      - name: Build (Release)
+
+      - name: Build
         working-directory: ${{ env.PROJECT_DIR }}
         run: dotnet build --configuration Release --no-restore
- 
-      - name: Test (Release)
+
+      - name: Test
         working-directory: ${{ env.PROJECT_DIR }}
         run: >
-          dotnet test --configuration Release --no-build
+          dotnet test
+          --configuration Release
+          --no-build
           --results-directory ./TestResults
           --logger "trx;LogFileName=test-results.trx"
           --logger "console;verbosity=normal"
- 
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results
-          path: ${{ env.PROJECT_DIR }}/TestResults/*.trx
+          name: masnaei-test-results
+          path: ${{ env.PROJECT_DIR }}/TestResults/**/*.trx
           if-no-files-found: warn
- 
-Claude finished the response
